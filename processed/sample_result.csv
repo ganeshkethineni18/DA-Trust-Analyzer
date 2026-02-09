@@ -1,0 +1,7 @@
+column,data_type,missing_percent,trust,remarks
+S.No,Identifier,0.0,Ignored,Index / serial number column
+Age,Numeric,9.5,Needs Cleaning,Some missing values
+Salary,Numeric,6.5,High Risk,Outliers or unstable values
+Rating,Categorical,8.5,Needs Cleaning,Category based data
+Gender,Categorical,11.5,Needs Cleaning,Category based data
+Department,Categorical,0.0,Reliable,Category based data

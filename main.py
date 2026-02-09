@@ -1,27 +1,21 @@
 import pandas as pd
 import numpy as np
+import os
 
 # -----------------------------
 # Helper Functions
 # -----------------------------
 
 def is_index_like(series, row_count):
-    """Detect index / serial number columns"""
     if not pd.api.types.is_numeric_dtype(series):
         return False
-
-    unique_count = series.nunique()
-    if unique_count < row_count * 0.9:
+    if series.nunique() < row_count * 0.9:
         return False
-
-    sorted_vals = series.dropna().sort_values()
-    diffs = sorted_vals.diff().dropna()
-
+    diffs = series.dropna().sort_values().diff().dropna()
     return diffs.nunique() == 1
 
 
 def probe_numeric(series):
-    """Try converting object column to numeric safely"""
     converted = pd.to_numeric(series, errors="coerce")
     success_rate = converted.notna().mean()
     return converted, success_rate
@@ -42,144 +36,99 @@ def missing_risk(pct):
 
 def analyze_dataset(csv_path):
     df = pd.read_csv(csv_path)
-
     rows, cols = df.shape
-    report = []
-    column_results = []
 
-    report.append("📊 DATA TRUST ANALYSIS REPORT\n")
-    report.append(f"Rows: {rows}")
-    report.append(f"Columns: {cols}\n")
+    results = []
 
     for col in df.columns:
-        col_info = {
+        series = df[col]
+        row = {
             "column": col,
-            "type": None,
-            "trust": None,
-            "notes": []
+            "data_type": "",
+            "missing_percent": round(series.isna().mean() * 100, 2),
+            "trust": "",
+            "remarks": ""
         }
 
-        series = df[col]
-
-        # -------------------------
-        # Step 1: Index-like check
-        # -------------------------
+        # Index-like column
         if is_index_like(series, rows):
-            col_info["type"] = "Identifier"
-            col_info["trust"] = "Ignored"
-            col_info["notes"].append("Index-like column (excluded from stats)")
-            column_results.append(col_info)
+            row["data_type"] = "Identifier"
+            row["trust"] = "Ignored"
+            row["remarks"] = "Index / serial number column"
+            results.append(row)
             continue
 
-        # -------------------------
-        # Step 2: Missing values
-        # -------------------------
-        missing_pct = series.isna().mean() * 100
-        miss_risk = missing_risk(missing_pct)
+        miss_risk = missing_risk(row["missing_percent"])
 
-        col_info["notes"].append(f"Missing: {missing_pct:.2f}% ({miss_risk})")
-
-        # -------------------------
-        # Step 3: Type handling
-        # -------------------------
+        # Numeric column
         if pd.api.types.is_numeric_dtype(series):
-            col_info["type"] = "Numeric"
             numeric_series = series
+            row["data_type"] = "Numeric"
 
+        # Object column
         elif pd.api.types.is_object_dtype(series):
             converted, success = probe_numeric(series)
-
             if success >= 0.9:
-                col_info["type"] = "Numeric (from object)"
                 numeric_series = converted
-                col_info["notes"].append("Object column safely converted to numeric")
+                row["data_type"] = "Numeric (from text)"
+                row["remarks"] = "Converted text to numbers"
             else:
-                col_info["type"] = "Categorical"
-                col_info["trust"] = "Needs Cleaning" if miss_risk != "Low" else "Reliable"
-                column_results.append(col_info)
+                row["data_type"] = "Categorical"
+                row["trust"] = "Needs Cleaning" if miss_risk != "Low" else "Reliable"
+                row["remarks"] = "Category based data"
+                results.append(row)
                 continue
         else:
-            col_info["type"] = "Other"
-            col_info["trust"] = "Needs Cleaning"
-            column_results.append(col_info)
+            row["data_type"] = "Other"
+            row["trust"] = "Needs Cleaning"
+            row["remarks"] = "Unclear data type"
+            results.append(row)
             continue
 
-        # -------------------------
-        # Step 4: Statistics
-        # -------------------------
+        # Statistics
         mean = numeric_series.mean()
         median = numeric_series.median()
         std = numeric_series.std()
+        iqr = numeric_series.quantile(0.75) - numeric_series.quantile(0.25)
 
-        q1 = numeric_series.quantile(0.25)
-        q3 = numeric_series.quantile(0.75)
-        iqr = q3 - q1
-
-        col_info["notes"].append(f"Mean: {mean:.3f}, Median: {median:.3f}")
-        col_info["notes"].append(f"STD: {std:.3f}, IQR: {iqr:.3f}")
-
-        # -------------------------
-        # Step 5: Distortion checks
-        # -------------------------
-        distortion = abs(mean - median)
-
-        high_distortion = distortion > (0.5 * std if std > 0 else 0)
+        distorted = abs(mean - median) > (0.5 * std if std > 0 else 0)
         unstable = std > iqr if iqr > 0 else False
 
-        if mean > median:
-            skew = "Right"
-        elif mean < median:
-            skew = "Left"
-        else:
-            skew = "Symmetric"
-
-        col_info["notes"].append(f"Skewness: {skew}")
-
-        # -------------------------
-        # Step 6: Trust decision
-        # -------------------------
-        if miss_risk == "High" or high_distortion or unstable:
-            col_info["trust"] = "High Risk"
+        if miss_risk == "High" or distorted or unstable:
+            row["trust"] = "High Risk"
+            row["remarks"] = "Outliers or unstable values"
         elif miss_risk == "Medium":
-            col_info["trust"] = "Needs Cleaning"
+            row["trust"] = "Needs Cleaning"
+            row["remarks"] = "Some missing values"
         else:
-            col_info["trust"] = "Reliable"
+            row["trust"] = "Reliable"
+            row["remarks"] = "Looks consistent"
 
-        column_results.append(col_info)
+        results.append(row)
 
-    # -----------------------------
-    # Dataset-level verdict
-    # -----------------------------
-    high_risk_count = sum(1 for c in column_results if c["trust"] == "High Risk")
-
-    if high_risk_count > len(column_results) * 0.4:
-        verdict = "❌ NOT RELIABLE"
-    elif high_risk_count > 0:
-        verdict = "⚠️ REQUIRES CLEANING"
-    else:
-        verdict = "✅ SAFE FOR ANALYSIS"
+    result_df = pd.DataFrame(results)
 
     # -----------------------------
-    # Report Generation
+    # Save result to processed folder
     # -----------------------------
-    report.append("COLUMN ANALYSIS:\n")
+    os.makedirs("processed", exist_ok=True)
 
-    for c in column_results:
-        report.append(f"• {c['column']}")
-        report.append(f"  Type: {c['type']}")
-        report.append(f"  Trust: {c['trust']}")
-        for note in c["notes"]:
-            report.append(f"  - {note}")
-        report.append("")
+    base_name = os.path.splitext(os.path.basename(csv_path))[0]
+    output_path = os.path.join("processed", f"{base_name}_result.csv")
 
-    report.append(f"\nFINAL VERDICT: {verdict}")
+    result_df.to_csv(output_path, index=False)
 
-    return "\n".join(report)
+    return result_df, output_path
 
 
 # -----------------------------
-# Run Example
+# Run
 # -----------------------------
 if __name__ == "__main__":
-    path = "C:\\Users\\ASUS\\Documents\\inomatics\\sample.csv"   # <-- replace with your CSV path
-    print(analyze_dataset(path))
+    path = r"C:\Users\ASUS\Documents\inomatics\sample.csv"
+    df_result, saved_path = analyze_dataset(path)
+
+    print("\n✅ Data Trust Analysis Completed")
+    print(f"📁 Result saved at: {saved_path}")
+    print("\nPreview:")
+    print(df_result.head())
