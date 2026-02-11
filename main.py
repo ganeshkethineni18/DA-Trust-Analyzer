@@ -7,15 +7,19 @@ import os
 # -----------------------------
 
 def is_index_like(series, row_count):
+    """Check if column is serial number / ID"""
     if not pd.api.types.is_numeric_dtype(series):
         return False
+
     if series.nunique() < row_count * 0.9:
         return False
+
     diffs = series.dropna().sort_values().diff().dropna()
     return diffs.nunique() == 1
 
 
 def probe_numeric(series):
+    """Try converting text column to numbers"""
     converted = pd.to_numeric(series, errors="coerce")
     success_rate = converted.notna().mean()
     return converted, success_rate
@@ -35,6 +39,7 @@ def missing_risk(pct):
 # -----------------------------
 
 def analyze_dataset(csv_path):
+
     df = pd.read_csv(csv_path)
     rows, cols = df.shape
 
@@ -42,6 +47,7 @@ def analyze_dataset(csv_path):
 
     for col in df.columns:
         series = df[col]
+
         row = {
             "column": col,
             "data_type": "",
@@ -50,24 +56,25 @@ def analyze_dataset(csv_path):
             "remarks": ""
         }
 
-        # Index-like column
+        # 1️⃣ Check Identifier column
         if is_index_like(series, rows):
             row["data_type"] = "Identifier"
             row["trust"] = "Ignored"
-            row["remarks"] = "Index / serial number column"
+            row["remarks"] = "Serial number / ID column"
             results.append(row)
             continue
 
         miss_risk = missing_risk(row["missing_percent"])
 
-        # Numeric column
+        # 2️⃣ Numeric column
         if pd.api.types.is_numeric_dtype(series):
             numeric_series = series
             row["data_type"] = "Numeric"
 
-        # Object column
+        # 3️⃣ Object column
         elif pd.api.types.is_object_dtype(series):
             converted, success = probe_numeric(series)
+
             if success >= 0.9:
                 numeric_series = converted
                 row["data_type"] = "Numeric (from text)"
@@ -75,17 +82,17 @@ def analyze_dataset(csv_path):
             else:
                 row["data_type"] = "Categorical"
                 row["trust"] = "Needs Cleaning" if miss_risk != "Low" else "Reliable"
-                row["remarks"] = "Category based data"
+                row["remarks"] = "Category data"
                 results.append(row)
                 continue
         else:
             row["data_type"] = "Other"
             row["trust"] = "Needs Cleaning"
-            row["remarks"] = "Unclear data type"
+            row["remarks"] = "Unknown data type"
             results.append(row)
             continue
 
-        # Statistics
+        # 4️⃣ Statistics for numeric columns
         mean = numeric_series.mean()
         median = numeric_series.median()
         std = numeric_series.std()
@@ -94,12 +101,19 @@ def analyze_dataset(csv_path):
         distorted = abs(mean - median) > (0.5 * std if std > 0 else 0)
         unstable = std > iqr if iqr > 0 else False
 
-        if miss_risk == "High" or distorted or unstable:
+        # 5️⃣ Balanced Trust Decision
+        if miss_risk == "High":
             row["trust"] = "High Risk"
-            row["remarks"] = "Outliers or unstable values"
-        elif miss_risk == "Medium":
+            row["remarks"] = "Too many missing values"
+
+        elif distorted and unstable:
+            row["trust"] = "High Risk"
+            row["remarks"] = "Outliers affecting data"
+
+        elif miss_risk == "Medium" or distorted:
             row["trust"] = "Needs Cleaning"
-            row["remarks"] = "Some missing values"
+            row["remarks"] = "Some issues detected"
+
         else:
             row["trust"] = "Reliable"
             row["remarks"] = "Looks consistent"
@@ -108,27 +122,47 @@ def analyze_dataset(csv_path):
 
     result_df = pd.DataFrame(results)
 
-    # -----------------------------
-    # Save result to processed folder
-    # -----------------------------
-    os.makedirs("processed", exist_ok=True)
+    # Dataset level verdict
+    high_risk_count = (result_df["trust"] == "High Risk").sum()
 
-    base_name = os.path.splitext(os.path.basename(csv_path))[0]
-    output_path = os.path.join("processed", f"{base_name}_result.csv")
+    if high_risk_count > len(result_df) * 0.4:
+        verdict = "Dataset is NOT reliable"
+    elif high_risk_count > 0:
+        verdict = "Dataset needs cleaning"
+    else:
+        verdict = "Dataset looks safe"
 
-    result_df.to_csv(output_path, index=False)
-
-    return result_df, output_path
+    return result_df, verdict
 
 
 # -----------------------------
 # Run
 # -----------------------------
 if __name__ == "__main__":
-    path = r"C:\Users\ASUS\Documents\inomatics\sample.csv"
-    df_result, saved_path = analyze_dataset(path)
 
-    print("\n✅ Data Trust Analysis Completed")
-    print(f"📁 Result saved at: {saved_path}")
-    print("\nPreview:")
-    print(df_result.head())
+    path = r"C:\Users\ASUS\Documents\inomatics\heavy_sample.csv"
+
+    df_result, verdict = analyze_dataset(path)
+
+    print("\n📊 Data Trust Analysis Completed")
+    print("\nResult:")
+    print(df_result)
+
+    print("\nFinal Verdict:", verdict)
+
+    # Ask user for export
+    choice = input("\nDo you want to export this result as CSV? (yes/no): ").strip().lower()
+
+    if choice in ["yes", "y"]:
+
+        os.makedirs("processed", exist_ok=True)
+
+        base_name = os.path.splitext(os.path.basename(path))[0]
+        output_path = os.path.join("processed", f"{base_name}_result.csv")
+
+        df_result.to_csv(output_path, index=False)
+
+        print(f"\n📁 Result saved at: {output_path}")
+
+    else:
+        print("\nResult not saved.")
