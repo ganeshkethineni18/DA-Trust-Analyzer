@@ -1,133 +1,181 @@
-import numpy as np
 import pandas as pd
+import numpy as np
+import os
+import re
 
 
-def generate_heavy_dataset(
-    rows=50000,
-    missing_rate=0.08,
-    outlier_rate=0.03,
-    duplicate_rate=0.02,
-    seed=42,
-    output_file="heavy_sample.csv"
-):
-    """
-    Generates a large, messy dataset to test Data Trust Analyzer.
+def is_index_like(series, row_count):
+    if not pd.api.types.is_numeric_dtype(series):
+        return False
 
-    rows           → number of rows
-    missing_rate   → percentage of missing values
-    outlier_rate   → percentage of extreme values
-    duplicate_rate → percentage of duplicate rows
-    """
+    if series.nunique() < row_count * 0.9:
+        return False
 
-    np.random.seed(seed)
+    diffs = series.dropna().sort_values().diff().dropna()
+    return diffs.nunique() == 1
 
-    # -------------------------------------------------
-    # 1️⃣ Create Identifier Column (Serial Number)
-    # -------------------------------------------------
-    s_no = np.arange(1, rows + 1)
 
-    # -------------------------------------------------
-    # 2️⃣ Create Numeric Columns
-    # -------------------------------------------------
+def clean_numeric_text(series):
+    # Remove currency symbols, commas, percentage signs
+    return series.astype(str).str.replace(r"[,$%]", "", regex=True)
 
-    # Normal distributed salary
-    salary = np.random.normal(loc=60000, scale=15000, size=rows)
 
-    # Bonus depends on salary (correlated column)
-    bonus = salary * np.random.uniform(0.05, 0.2, rows)
+def probe_numeric(series):
+    cleaned = clean_numeric_text(series)
+    converted = pd.to_numeric(cleaned, errors="coerce")
+    success_rate = converted.notna().mean()
+    return converted, success_rate
 
-    # Total income derived from salary + bonus
-    total_income = salary + bonus
 
-    # Age between 18–65
-    age = np.random.randint(18, 65, rows).astype(float)
+def analyze_dataset(csv_path):
 
-    # Expenses with skewed distribution
-    expenses = np.random.exponential(scale=20000, size=rows)
+    df = pd.read_csv(csv_path)
+    rows = len(df)
 
-    # -------------------------------------------------
-    # 3️⃣ Inject Outliers
-    # -------------------------------------------------
-    outlier_count = int(rows * outlier_rate)
-    outlier_indices = np.random.choice(rows, outlier_count, replace=False)
+    results = []
 
-    salary[outlier_indices] *= 6
-    expenses[outlier_indices] *= 8
+    for col in df.columns:
+        series = df[col]
 
-    # -------------------------------------------------
-    # 4️⃣ Categorical Columns
-    # -------------------------------------------------
-    gender = np.random.choice(["Male", "Female", "Other"], rows)
+        missing_count = series.isna().sum()
+        missing_percent = round((missing_count / rows) * 100, 2)
 
-    department = np.random.choice(
-        ["HR", "Engineering", "Sales", "Marketing", "Finance", "Support"],
-        rows
-    )
+        row = {
+            "column": col,
+            "data_type": "",
+            "missing_count": missing_count,
+            "missing_percent": missing_percent,
+            "distorted": False,
+            "unstable": False,
+            "outlier_count": 0,
+            "trust": "",
+            "remarks": ""
+        }
 
-    # High-cardinality city column
-    city = np.random.choice([f"City_{i}" for i in range(500)], rows)
+        # Identifier detection
+        if is_index_like(series, rows):
+            row["data_type"] = "Identifier"
+            row["trust"] = "Ignored"
+            row["remarks"] = "Serial number or ID column"
+            results.append(row)
+            continue
 
-    # -------------------------------------------------
-    # 5️⃣ Numeric Stored as Text (Dirty Column)
-    # -------------------------------------------------
-    rating_numeric = np.random.randint(1, 6, rows)
-    rating_text = rating_numeric.astype(str)
+        # Numeric detection
+        if pd.api.types.is_numeric_dtype(series):
+            numeric_series = series.dropna()
+            row["data_type"] = "Numeric"
 
-    # Add noise to rating column
-    noise_indices = np.random.choice(rows, int(rows * 0.05), replace=False)
-    rating_text[noise_indices] = "unknown"
+        elif pd.api.types.is_object_dtype(series):
+            converted, success = probe_numeric(series)
 
-    # -------------------------------------------------
-    # 6️⃣ Inject Missing Values
-    # -------------------------------------------------
-    def inject_missing(array):
-        mask = np.random.rand(rows) < missing_rate
-        array = array.astype(object)
-        array[mask] = np.nan
-        return array
+            if success >= 0.9:
+                numeric_series = converted.dropna()
+                row["data_type"] = "Numeric (from text)"
+                row["remarks"] = "Converted text to numbers"
+            else:
+                row["data_type"] = "Categorical"
 
-    age = inject_missing(age)
-    salary = inject_missing(salary)
-    bonus = inject_missing(bonus)
-    total_income = inject_missing(total_income)
-    expenses = inject_missing(expenses)
-    gender = inject_missing(gender)
+                if missing_percent >= 30:
+                    row["trust"] = "High Risk"
+                elif missing_percent >= 5:
+                    row["trust"] = "Needs Cleaning"
+                else:
+                    row["trust"] = "Reliable"
 
-    # -------------------------------------------------
-    # 7️⃣ Build Final DataFrame
-    # -------------------------------------------------
-    df = pd.DataFrame({
-        "S.No": s_no,
-        "Age": age,
-        "Salary": salary,
-        "Bonus": bonus,
-        "Total_Income": total_income,
-        "Expenses": expenses,
-        "Gender": gender,
-        "Department": department,
-        "City": city,
-        "Rating": rating_text
-    })
+                row["remarks"] = "Category data"
+                results.append(row)
+                continue
+        else:
+            row["data_type"] = "Other"
+            row["trust"] = "Needs Cleaning"
+            row["remarks"] = "Unknown data type"
+            results.append(row)
+            continue
 
-    # -------------------------------------------------
-    # 8️⃣ Add Duplicate Rows
-    # -------------------------------------------------
-    duplicate_count = int(rows * duplicate_rate)
-    duplicates = df.sample(duplicate_count)
-    df = pd.concat([df, duplicates], ignore_index=True)
+        # If numeric but all values missing
+        if len(numeric_series) == 0:
+            row["trust"] = "High Risk"
+            row["remarks"] = "All values missing"
+            results.append(row)
+            continue
 
-    # -------------------------------------------------
-    # 9️⃣ Save Dataset
-    # -------------------------------------------------
-    df.to_csv(output_file, index=False)
+        # 📊 Statistical Checks
+        mean = numeric_series.mean()
+        median = numeric_series.median()
+        std = numeric_series.std()
+        q1 = numeric_series.quantile(0.25)
+        q3 = numeric_series.quantile(0.75)
+        iqr = q3 - q1
 
-    print("\n✅ Heavy dataset generated successfully")
-    print(f"Rows: {df.shape[0]}")
-    print(f"Columns: {df.shape[1]}")
-    print(f"Saved as: {output_file}")
-    print("\nPreview:")
-    print(df.head())
+        # Skewness (better distortion detection)
+        skewness = numeric_series.skew()
+        distorted = abs(skewness) > 0.5
+
+        # Instability check
+        unstable = std > iqr if iqr > 0 else False
+
+        # Outlier detection (IQR rule)
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+        outliers = numeric_series[(numeric_series < lower_bound) | (numeric_series > upper_bound)]
+        outlier_count = len(outliers)
+
+        row["distorted"] = distorted
+        row["unstable"] = unstable
+        row["outlier_count"] = outlier_count
+
+        # Trust logic
+        if missing_percent >= 30:
+            row["trust"] = "High Risk"
+            row["remarks"] = "Too many missing values"
+
+        elif outlier_count > rows * 0.1:
+            row["trust"] = "High Risk"
+            row["remarks"] = "High number of outliers"
+
+        elif distorted or unstable or missing_percent >= 5:
+            row["trust"] = "Needs Cleaning"
+            row["remarks"] = "Distribution issues detected"
+
+        else:
+            row["trust"] = "Reliable"
+            row["remarks"] = "Looks consistent"
+
+        results.append(row)
+
+    result_df = pd.DataFrame(results)
+
+    high_risk_count = (result_df["trust"] == "High Risk").sum()
+
+    if high_risk_count > len(result_df) * 0.4:
+        verdict = "Dataset is NOT reliable"
+    elif high_risk_count > 0:
+        verdict = "Dataset needs cleaning"
+    else:
+        verdict = "Dataset looks safe"
+
+    return result_df, verdict
 
 
 if __name__ == "__main__":
-    generate_heavy_dataset(rows=50000)
+
+    path = r"heavy_sample.csv"
+
+    df_result, verdict = analyze_dataset(path)
+
+    print("\nData Trust Analysis Completed\n")
+    print(df_result)
+    print("\nFinal Verdict:", verdict)
+
+    choice = input("\nExport result as CSV? (yes/no): ").strip().lower()
+
+    if choice in ["yes", "y"]:
+        os.makedirs("processed", exist_ok=True)
+
+        base_name = os.path.splitext(os.path.basename(path))[0]
+        output_path = os.path.join("processed", f"{base_name}_result.csv")
+
+        df_result.to_csv(output_path, index=False)
+        print(f"\nResult saved at: {output_path}")
+    else:
+        print("\nResult not saved.")
