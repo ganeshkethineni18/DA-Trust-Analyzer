@@ -1,0 +1,11 @@
+column,data_type,missing_count,missing_percent,distorted,unstable,outlier_count,trust,remarks
+S.No,Numeric,0,0.0,False,False,0,Reliable,Looks consistent
+Age,Numeric,4216,8.27,False,False,0,Needs Cleaning,Distribution issues detected
+Salary,Numeric,4025,7.89,True,True,1656,Needs Cleaning,Distribution issues detected
+Bonus,Numeric,4119,8.08,True,False,229,Needs Cleaning,Distribution issues detected
+Total_Income,Numeric,4094,8.03,False,False,361,Needs Cleaning,Distribution issues detected
+Expenses,Numeric,3940,7.73,True,True,2764,Needs Cleaning,Distribution issues detected
+Gender,Categorical,4069,7.98,False,False,0,Needs Cleaning,Category data
+Department,Categorical,0,0.0,False,False,0,Reliable,Category data
+City,Categorical,0,0.0,False,False,0,Reliable,Category data
+Rating,Numeric (from text),0,0.0,False,False,0,Reliable,Looks consistent
