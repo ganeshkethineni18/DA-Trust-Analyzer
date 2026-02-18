@@ -1,60 +1,101 @@
-# 📊 Data Trust Analyzer
+📊 Data Trust Analyzer
+Overview
 
-A Python-based tool that evaluates dataset reliability **before analysis or modeling**.
+This project is a Python-based Data Trust Analyzer that evaluates the reliability of a dataset before performing analysis or modeling. It checks for missing values, distribution distortion, instability, and outliers using statistical methods.
 
----
+The goal is to ensure that data is trustworthy before drawing conclusions from it.
 
-## 🔍 Why This Project?
+Features
 
-In real-world data analysis, datasets often contain:
+Detects missing values (count and percentage)
 
-- Missing values
-- Skewed distributions
-- Outliers
-- Unstable columns
-- Mixed data types
+Identifies identifier/serial number columns
 
-If these issues are ignored, analysis results become misleading.
+Converts numeric text (e.g., "$5000", "45%") into proper numbers
 
-This project ensures that a dataset is statistically reliable before proceeding to further analysis.
+Detects skewed distributions using skewness
 
----
+Detects instability using Standard Deviation and IQR comparison
 
-## ⚙️ Features
+Detects outliers using the IQR rule
 
-- ✅ Missing value detection (count + percentage)
-- ✅ Identifier column detection
-- ✅ Skewness-based distortion detection
-- ✅ Instability detection using standard deviation vs IQR
-- ✅ Outlier detection using IQR method
-- ✅ Numeric and categorical validation
-- ✅ Column-level trust classification
-- ✅ Dataset-level trust verdict
-- ✅ Optional CSV report export
+Classifies each column as:
 
----
+Reliable
 
-## 🧠 How It Works
+Needs Cleaning
 
-Each column is analyzed independently:
+High Risk
 
-1. Detect missing values
-2. Validate data type
-3. Compute:
-   - Mean
-   - Median
-   - Standard Deviation
-   - IQR
-   - Skewness
-4. Detect outliers using IQR rule
-5. Classify column as:
-   - Reliable
-   - Needs Cleaning
-   - High Risk
+Provides overall dataset trust verdict
 
-Finally, an overall dataset verdict is generated.
+Option to export results as CSV
 
----
+Concepts Used
 
-## 📁 Project Structure
+File Handling
 
+Data Preprocessing
+
+Descriptive Statistics
+
+Skewness Analysis
+
+IQR Method (Outlier Detection)
+
+Exception Handling
+
+Object-Oriented Thinking (Structured Functions)
+
+Conditional Logic
+
+Technologies Used
+
+Language: Python
+
+Libraries: Pandas, NumPy
+
+Programming Style: Modular & Functional Design
+
+Platform: Cross-platform (Windows/Linux/macOS)
+
+How to Run
+
+Install Python (version 3.x)
+
+Install required libraries:
+
+pip install pandas numpy
+
+
+Place your dataset CSV file in the project folder
+
+Run the program:
+
+python data_trust_analyzer.py
+
+
+View the column-level trust report in the terminal
+
+Optionally export the report as a CSV file
+
+Use Case
+
+This project is useful for:
+
+Data Analysts who want to validate dataset reliability
+
+Students learning EDA and preprocessing
+
+Anyone who wants to understand how statistics detect data issues
+
+Pre-modeling data validation workflows
+
+Author
+
+Kethineni Venkata Ganesh
+Aspiring Data Analyst | Python & SQL Enthusiast
+
+License
+
+This project is created for educational and portfolio purposes.
