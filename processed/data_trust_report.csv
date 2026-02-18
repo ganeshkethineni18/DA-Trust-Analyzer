@@ -1,0 +1,6 @@
+column,data_type,missing_count,missing_percent,distorted,unstable,outlier_count,trust,remarks
+transaction_id,Identifier,0,0.0,False,False,0,Ignored,Identifier column
+transaction_amount,Numeric,0,0.0,True,True,21,High Risk,Excessive outliers
+processing_time_seconds,Numeric,36,18.0,False,True,33,High Risk,Excessive outliers
+discount_percentage,Numeric,33,16.5,True,True,38,High Risk,Excessive outliers
+transaction_date,Categorical,0,0.0,False,False,0,Reliable,Categorical column
