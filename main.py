@@ -1,184 +1,220 @@
-"""
-Data Trust Analyzer
 
-Evaluates dataset reliability before analysis by detecting:
-- Missing values
-- Distribution distortion (skewness)
-- Instability (STD vs IQR)
-- Outliers (IQR method)
-- Identifier columns
-"""
+
 
 import pandas as pd
 import numpy as np
 import os
 
 
-# ------------------------------------------------------------
-# Identifier Detection
-# ------------------------------------------------------------
-def is_index_like(column, total_rows):
-    if not pd.api.types.is_numeric_dtype(column):
+
+def check_if_identifier(col_data, total_rows):
+
+    if not pd.api.types.is_numeric_dtype(col_data):
         return False
 
-    if column.nunique() < total_rows * 0.9:
+
+    if col_data.nunique() < total_rows * 0.9:
         return False
 
-    diffs = column.dropna().sort_values().diff().dropna()
-    return diffs.nunique() == 1
+    
+    sorted_values = col_data.dropna().sort_values()
+    differences = sorted_values.diff().dropna()
+
+    if differences.nunique() == 1:
+        return True
+
+    return False
 
 
-# ------------------------------------------------------------
-# Safe Numeric Conversion
-# ------------------------------------------------------------
-def try_convert_to_number(column):
-    cleaned = (
-        column.astype(str)
-        .str.replace("$", "", regex=False)
-        .str.replace(",", "", regex=False)
-        .str.replace("%", "", regex=False)
-    )
+def convert_text_to_number(col_data):
 
-    converted = pd.to_numeric(cleaned, errors="coerce")
-    return converted, converted.notna().mean()
+    cleaned = col_data.astype(str)
+    cleaned = cleaned.str.replace("$", "", regex=False)
+    cleaned = cleaned.str.replace(",", "", regex=False)
+    cleaned = cleaned.str.replace("%", "", regex=False)
+
+    numeric_version = pd.to_numeric(cleaned, errors="coerce")
+    conversion_success = numeric_version.notna().mean()
+
+    return numeric_version, conversion_success
 
 
-# ------------------------------------------------------------
-# Core Analyzer
-# ------------------------------------------------------------
+def analyze_one_column(col_name, col_data, total_rows):
+
+    missing_count = col_data.isna().sum()
+    missing_percent = (missing_count / total_rows) * 100
+
+    column_type = ""
+    is_distorted = False
+    is_unstable = False
+    number_of_outliers = 0
+    trust_level = ""
+    notes = ""
+
+    if check_if_identifier(col_data, total_rows):
+        return [
+            col_name,
+            "Identifier",
+            missing_count,
+            round(missing_percent, 2),
+            False,
+            False,
+            0,
+            "Ignored",
+            "Identifier column"
+        ]
+
+    if pd.api.types.is_numeric_dtype(col_data):
+        numeric_values = col_data.dropna()
+        column_type = "Numeric"
+
+    else:
+        converted_values, success_rate = convert_text_to_number(col_data)
+
+        if success_rate >= 0.9:
+            numeric_values = converted_values.dropna()
+            column_type = "Numeric (converted)"
+        else:
+            column_type = "Categorical"
+
+            if missing_percent >= 30:
+                trust_level = "High Risk"
+            elif missing_percent >= 5:
+                trust_level = "Needs Cleaning"
+            else:
+                trust_level = "Reliable"
+
+            notes = "Categorical column"
+
+            return [
+                col_name,
+                column_type,
+                missing_count,
+                round(missing_percent, 2),
+                False,
+                False,
+                0,
+                trust_level,
+                notes
+            ]
+
+    if len(numeric_values) == 0:
+        return [
+            col_name,
+            column_type,
+            missing_count,
+            round(missing_percent, 2),
+            False,
+            False,
+            0,
+            "High Risk",
+            "All values missing"
+        ]
+    
+    std_value = numeric_values.std()
+    q1 = numeric_values.quantile(0.25)
+    q3 = numeric_values.quantile(0.75)
+    iqr_value = q3 - q1
+    skew_value = numeric_values.skew()
+
+    if abs(skew_value) > 0.5:
+        is_distorted = True
+
+    if iqr_value > 0 and std_value > iqr_value:
+        is_unstable = True
+
+    lower_limit = q1 - 1.5 * iqr_value
+    upper_limit = q3 + 1.5 * iqr_value
+
+    outliers = numeric_values[
+        (numeric_values < lower_limit) |
+        (numeric_values > upper_limit)
+    ]
+
+    number_of_outliers = len(outliers)
+
+
+    if missing_percent >= 30:
+        trust_level = "High Risk"
+        notes = "Too many missing values"
+
+    elif number_of_outliers > total_rows * 0.1:
+        trust_level = "High Risk"
+        notes = "Too many outliers"
+
+    elif is_distorted or is_unstable or missing_percent >= 5:
+        trust_level = "Needs Cleaning"
+        notes = "Distribution issues detected"
+
+    else:
+        trust_level = "Reliable"
+        notes = "Column is reliable"
+
+    return [
+        col_name,
+        column_type,
+        missing_count,
+        round(missing_percent, 2),
+        is_distorted,
+        is_unstable,
+        number_of_outliers,
+        trust_level,
+        notes
+    ]
+
 def analyze_dataset(file_path):
 
-    df = pd.read_csv(file_path)
-    total_rows = len(df)
+    data = pd.read_csv(file_path)
+    total_rows = len(data)
 
-    results = []
+    final_report = []
 
-    for column_name in df.columns:
+    for column_name in data.columns:
+        column_result = analyze_one_column(
+            column_name,
+            data[column_name],
+            total_rows
+        )
+        final_report.append(column_result)
 
-        column = df[column_name]
-        missing_count = column.isna().sum()
-        missing_percent = (missing_count / total_rows) * 100
+    report_df = pd.DataFrame(final_report, columns=[
+        "column",
+        "data_type",
+        "missing_count",
+        "missing_percent",
+        "distorted",
+        "unstable",
+        "outlier_count",
+        "trust",
+        "remarks"
+    ])
 
-        result = {
-            "column": column_name,
-            "data_type": "",
-            "missing_count": missing_count,
-            "missing_percent": round(missing_percent, 2),
-            "distorted": False,
-            "unstable": False,
-            "outlier_count": 0,
-            "trust": "",
-            "remarks": ""
-        }
+    high_risk_columns = (report_df["trust"] == "High Risk").sum()
 
-        # Identifier
-        if is_index_like(column, total_rows):
-            result.update({
-                "data_type": "Identifier",
-                "trust": "Ignored",
-                "remarks": "Identifier column"
-            })
-            results.append(result)
-            continue
-
-        # Numeric Detection
-        if pd.api.types.is_numeric_dtype(column):
-            numeric_values = column.dropna()
-            result["data_type"] = "Numeric"
-        else:
-            converted, success = try_convert_to_number(column)
-
-            if success >= 0.9:
-                numeric_values = converted.dropna()
-                result["data_type"] = "Numeric (converted)"
-            else:
-                result["data_type"] = "Categorical"
-                result["trust"] = (
-                    "High Risk" if missing_percent >= 30
-                    else "Needs Cleaning" if missing_percent >= 5
-                    else "Reliable"
-                )
-                result["remarks"] = "Categorical column"
-                results.append(result)
-                continue
-
-        # Empty Numeric Column
-        if len(numeric_values) == 0:
-            result.update({
-                "trust": "High Risk",
-                "remarks": "All values missing"
-            })
-            results.append(result)
-            continue
-
-        # Statistical Checks
-        std = numeric_values.std()
-        q1 = numeric_values.quantile(0.25)
-        q3 = numeric_values.quantile(0.75)
-        iqr = q3 - q1
-        skew = numeric_values.skew()
-
-        result["distorted"] = abs(skew) > 0.5
-        result["unstable"] = iqr > 0 and std > iqr
-
-        lower = q1 - 1.5 * iqr
-        upper = q3 + 1.5 * iqr
-        outliers = numeric_values[
-            (numeric_values < lower) | (numeric_values > upper)
-        ]
-        result["outlier_count"] = len(outliers)
-
-        # Trust Classification
-        if missing_percent >= 30:
-            result["trust"] = "High Risk"
-            result["remarks"] = "Too many missing values"
-
-        elif len(outliers) > total_rows * 0.1:
-            result["trust"] = "High Risk"
-            result["remarks"] = "Excessive outliers"
-
-        elif result["distorted"] or result["unstable"] or missing_percent >= 5:
-            result["trust"] = "Needs Cleaning"
-            result["remarks"] = "Distribution issues detected"
-
-        else:
-            result["trust"] = "Reliable"
-            result["remarks"] = "Column is reliable"
-
-        results.append(result)
-
-    results_df = pd.DataFrame(results)
-
-    high_risk_count = (results_df["trust"] == "High Risk").sum()
-
-    if high_risk_count > len(results_df) * 0.4:
-        verdict = "Dataset is NOT reliable"
-    elif high_risk_count > 0:
-        verdict = "Dataset needs cleaning"
+    if high_risk_columns > len(report_df) * 0.4:
+        overall_verdict = "Dataset is NOT reliable"
+    elif high_risk_columns > 0:
+        overall_verdict = "Dataset needs cleaning"
     else:
-        verdict = "Dataset is safe for analysis"
+        overall_verdict = "Dataset is safe for analysis"
 
-    return results_df, verdict
+    return report_df, overall_verdict
 
-
-# ------------------------------------------------------------
-# Run Script
-# ------------------------------------------------------------
 if __name__ == "__main__":
 
     FILE_PATH = "numerical_cleaning_advanced.csv"
 
-    results, verdict = analyze_dataset(FILE_PATH)
+    results_table, final_verdict = analyze_dataset(FILE_PATH)
 
     print("\n=== DATA TRUST ANALYSIS REPORT ===\n")
-    print(results)
-    print("\nFinal Verdict:", verdict)
+    print(results_table)
+    print("\nFinal Verdict:", final_verdict)
 
-    save = input("\nExport report as CSV? (yes/no): ").lower()
+    user_choice = input("\nExport report as CSV? (yes/no): ").lower()
 
-    if save == "yes":
+    if user_choice == "yes":
         os.makedirs("processed", exist_ok=True)
-        results.to_csv("processed/data_trust_report.csv", index=False)
+        results_table.to_csv("processed/data_trust_report.csv", index=False)
         print("\nReport saved to processed/data_trust_report.csv")
     else:
         print("\nExport skipped.")
